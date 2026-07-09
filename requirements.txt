@@ -1,0 +1,10 @@
+fastapi==0.115.14
+uvicorn==0.35.0
+pydantic-settings==2.10.1
+langchain==0.3.27
+langchain-openai==0.3.28
+neo4j==5.28.1
+google-api-python-client==2.176.0
+google-auth-httplib2==0.2.0
+google-auth-oauthlib==1.2.2
+requests==2.32.4
