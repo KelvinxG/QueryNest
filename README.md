@@ -95,17 +95,19 @@ Copy-Item .env.prod.example .env.prod
 
 ### 4. Start API explicitly in dev or prod mode
 
-Development mode:
+Development mode (local only):
 
 ```bash
 python run_app.py --env dev --host 127.0.0.1 --port 8001 --reload
 ```
 
-Production mode:
+Production-like mode (local machine):
 
 ```bash
-python run_app.py --env prod --host 0.0.0.0 --port 8001
+python run_app.py --env prod --host 0.0.0.0
 ```
+
+If `PORT` is not set locally, `run_app.py` defaults to `8001`.
 
 ## Deploy On Render
 
@@ -154,11 +156,14 @@ After deploy, update Slack Events Request URL to:
 
 - `https://<your-render-domain>/slack/events`
 
-## Run The API
+## Run The API Locally
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8001
+uvicorn app.api.asgi:app --host 127.0.0.1 --port 8001
 ```
+
+Use this fixed `8001` command for local development only.
+For hosted production (Render), use dynamic port binding (`$PORT`) from the deploy section above.
 
 ## Public API Requirement (Prod-Ready)
 
@@ -299,7 +304,7 @@ result = ingest_google_document(
 print(result.metadata.model_dump())
 ```
 
-Or call the API endpoint:
+Or call the local API endpoint:
 
 ```bash
 curl -X POST http://localhost:8001/ingest/google \
@@ -308,7 +313,7 @@ curl -X POST http://localhost:8001/ingest/google \
     -d '{"document_id":"your-google-file-id","title":"Quarterly Planning","source_type":"doc"}'
 ```
 
-Direct text ingestion (no Google API call):
+Direct text ingestion (no Google API call, local example):
 
 ```bash
 curl -X POST http://localhost:8001/ingest/text \
