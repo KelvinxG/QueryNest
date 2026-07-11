@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 GOOGLE_API_SCOPES = (
     "https://www.googleapis.com/auth/spreadsheets.readonly",
     "https://www.googleapis.com/auth/presentations.readonly",
+    "https://www.googleapis.com/auth/documents.readonly",
 )
 
 
@@ -32,7 +33,7 @@ class DocumentStructure(BaseModel):
 class IngestedDocument(BaseModel):
     document_id: str
     title: str
-    source_type: Literal["sheet", "slides"]
+    source_type: Literal["sheet", "slides", "doc", "text"]
     extracted_text: str
     metadata: DocumentStructure
 
@@ -134,6 +135,52 @@ def extract_slides_text(presentation_id: str) -> str:
         raise RuntimeError(f"Unexpected error extracting presentation {presentation_id}.") from exc
 
 
+def _extract_doc_text_from_elements(elements: list[dict[str, Any]]) -> list[str]:
+    chunks: list[str] = []
+
+    for element in elements:
+        paragraph = element.get("paragraph")
+        if isinstance(paragraph, dict):
+            for para_element in paragraph.get("elements", []):
+                text_run = para_element.get("textRun", {})
+                content = text_run.get("content")
+                if isinstance(content, str):
+                    cleaned = content.strip()
+                    if cleaned:
+                        chunks.append(cleaned)
+
+        table = element.get("table")
+        if isinstance(table, dict):
+            for row in table.get("tableRows", []):
+                for cell in row.get("tableCells", []):
+                    cell_content = cell.get("content", [])
+                    chunks.extend(_extract_doc_text_from_elements(cell_content))
+
+        table_of_contents = element.get("tableOfContents")
+        if isinstance(table_of_contents, dict):
+            toc_content = table_of_contents.get("content", [])
+            chunks.extend(_extract_doc_text_from_elements(toc_content))
+
+    return chunks
+
+
+def extract_doc_text(document_id: str) -> str:
+    try:
+        service = _build_google_service("docs", "v1")
+        response: dict[str, Any] = service.documents().get(documentId=document_id).execute()
+
+        body = response.get("body", {})
+        elements = body.get("content", [])
+        chunks = _extract_doc_text_from_elements(elements)
+        return "\n".join(chunks).strip()
+    except HttpError as exc:
+        logger.exception("Google Docs API request failed for document %s.", document_id)
+        raise RuntimeError(f"Failed to extract text from document {document_id}.") from exc
+    except Exception as exc:
+        logger.exception("Unexpected error extracting document %s.", document_id)
+        raise RuntimeError(f"Unexpected error extracting document {document_id}.") from exc
+
+
 def map_document_structure(document_text: str) -> DocumentStructure:
     if not document_text.strip():
         raise ValueError("Document text must not be empty.")
@@ -145,6 +192,7 @@ def map_document_structure(document_text: str) -> DocumentStructure:
         )
         structured_llm = llm.with_structured_output(DocumentStructure)
         prompt = (
+            "If you don't know or don't have enough information you must say you don't know",
             "You extract a single structural category, a short summary, and related topics "
             "from internal business documents. Keep the category concise, the summary to a few "
             "sentences, and related topics specific.\n\n"
@@ -162,7 +210,7 @@ def map_document_structure(document_text: str) -> DocumentStructure:
 def ingest_google_document(
     document_id: str,
     title: str,
-    source_type: Literal["sheet", "slides"],
+    source_type: Literal["sheet", "slides", "doc"],
 ) -> IngestedDocument:
     if not document_id.strip():
         raise ValueError("Document ID must not be empty.")
@@ -177,8 +225,10 @@ def ingest_google_document(
 
         if source_type == "sheet":
             extracted_text = extract_sheet_text(normalized_document_id)
-        else:
+        elif source_type == "slides":
             extracted_text = extract_slides_text(normalized_document_id)
+        else:
+            extracted_text = extract_doc_text(normalized_document_id)
 
         metadata = map_document_structure(extracted_text)
         manager.save_document_relationships(
@@ -201,5 +251,42 @@ def ingest_google_document(
             source_type,
         )
         raise RuntimeError(f"Failed to ingest Google document {document_id}.") from exc
+    finally:
+        manager.close()
+
+
+def ingest_text_document(document_id: str, title: str, document_text: str) -> IngestedDocument:
+    if not document_id.strip():
+        raise ValueError("Document ID must not be empty.")
+
+    if not title.strip():
+        raise ValueError("Document title must not be empty.")
+
+    if not document_text.strip():
+        raise ValueError("Document text must not be empty.")
+
+    manager = build_neo4j_manager()
+    try:
+        normalized_document_id = document_id.strip()
+        normalized_title = title.strip()
+        normalized_text = document_text.strip()
+
+        metadata = map_document_structure(normalized_text)
+        manager.save_document_relationships(
+            doc_id=normalized_document_id,
+            title=normalized_title,
+            metadata=metadata.model_dump(),
+        )
+
+        return IngestedDocument(
+            document_id=normalized_document_id,
+            title=normalized_title,
+            source_type="text",
+            extracted_text=normalized_text,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        logger.exception("Failed to ingest direct text document %s.", document_id)
+        raise RuntimeError(f"Failed to ingest text document {document_id}.") from exc
     finally:
         manager.close()

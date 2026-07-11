@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import asyncio
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -62,6 +63,54 @@ class IngestionApiKeyTests(unittest.TestCase):
                 main._verify_ingestion_api_key("wrong")
 
         self.assertEqual(context.exception.status_code, 401)
+
+
+class SlackGuidanceRoutingTests(unittest.TestCase):
+    def test_is_guidance_request_accepts_bare_mention(self) -> None:
+        self.assertTrue(main._is_guidance_request("<@U12345>"))
+
+    def test_is_guidance_request_accepts_help_keyword(self) -> None:
+        self.assertTrue(main._is_guidance_request("<@U12345> help"))
+
+    def test_is_guidance_request_rejects_normal_question(self) -> None:
+        self.assertFalse(main._is_guidance_request("<@U12345> summarize roadmap"))
+
+    def test_process_app_mention_uses_usage_guidance_for_help_requests(self) -> None:
+        with patch("main.generate_usage_guidance", return_value="usage text") as guidance:
+            with patch("main.post_slack_message") as post_message:
+                main.process_app_mention("C123", "<@U12345> help")
+
+        guidance.assert_called_once_with()
+        post_message.assert_called_once_with("C123", "usage text")
+
+    def test_process_app_mention_uses_graph_query_for_normal_questions(self) -> None:
+        with patch("main.query_graph_rag", return_value="answer") as query:
+            with patch("main.post_slack_message") as post_message:
+                main.process_app_mention("C123", "<@U12345> summarize roadmap")
+
+        query.assert_called_once_with("summarize roadmap")
+        post_message.assert_called_once_with("C123", "answer")
+
+
+class DirectTextIngestionTests(unittest.TestCase):
+    def test_process_text_ingestion_calls_ingestion_layer(self) -> None:
+        with patch("main.ingest_text_document") as ingest_text:
+            main.process_text_ingestion("doc-1", "Manual Input", "Some direct text")
+
+        ingest_text.assert_called_once_with(
+            document_id="doc-1",
+            title="Manual Input",
+            document_text="Some direct text",
+        )
+
+
+class QueryEndpointTests(unittest.TestCase):
+    def test_query_graph_returns_query_response(self) -> None:
+        with patch("main.query_graph_rag", return_value="answer"):
+            result = asyncio.run(main.query_graph(main.QueryRequest(question="hello")))
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(result.answer, "answer")
 
 
 if __name__ == "__main__":

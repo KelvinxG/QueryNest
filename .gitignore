@@ -2,5 +2,14 @@
 __pycache__/
 *.pyc
 .env
+.env.dev
+.env.prod
 .env.*.local
 service-account.json
+google-service-account.json
+KGdatasolutioncontext.txt 
+kgdatasolution.jpg 
+kgdatasolution_resized.jpg 
+kgdatasolution_resized (1).jpg 
+KGdatasolution Company Profile & History.txt 
+architectural_decision_record.md
