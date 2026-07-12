@@ -7,7 +7,8 @@ import re
 import time
 from typing import Any, Literal
 
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from config import get_settings, require_settings
@@ -53,6 +54,21 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     status: str
     answer: str
+
+
+class WebSocketConnectionManager:
+    def __init__(self) -> None:
+        self.active_connections: set[WebSocket] = set()
+
+    async def connect(self, websocket: WebSocket) -> None:
+        await websocket.accept()
+        self.active_connections.add(websocket)
+
+    def disconnect(self, websocket: WebSocket) -> None:
+        self.active_connections.discard(websocket)
+
+
+ws_manager = WebSocketConnectionManager()
 
 
 @app.get("/health")
@@ -203,6 +219,78 @@ async def query_graph(payload: QueryRequest) -> QueryResponse:
     except Exception as exc:
         logger.exception("Failed to answer GraphRAG query.")
         raise HTTPException(status_code=500, detail="Failed to generate answer.") from exc
+
+
+def _extract_ws_question(payload: Any) -> str:
+    if isinstance(payload, dict):
+        question = payload.get("question")
+        if isinstance(question, str):
+            return question.strip()
+    if isinstance(payload, str):
+        return payload.strip()
+    return ""
+
+
+@app.websocket("/ws/chat")
+async def websocket_chat(websocket: WebSocket) -> None:
+    await ws_manager.connect(websocket)
+    await websocket.send_json(
+        {
+            "type": "connected",
+            "message": "WebSocket connection established. Send {'question': '...'} to query the graph.",
+        }
+    )
+
+    try:
+        while True:
+            payload = await websocket.receive_json()
+            question = _extract_ws_question(payload)
+
+            if not question:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "bad_request",
+                        "detail": "Question is required. Send {'question': '...'}.",
+                    }
+                )
+                continue
+
+            try:
+                normalized_question = _normalize_slack_text(question)
+                if _is_guidance_request(normalized_question):
+                    answer = await run_in_threadpool(generate_usage_guidance)
+                else:
+                    answer = await run_in_threadpool(query_graph_rag, normalized_question)
+
+                await websocket.send_json(
+                    {
+                        "type": "answer",
+                        "status": "ok",
+                        "answer": answer,
+                    }
+                )
+            except ValueError as exc:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "bad_request",
+                        "detail": str(exc),
+                    }
+                )
+            except Exception:
+                logger.exception("WebSocket query handling failed.")
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "internal_error",
+                        "detail": "Failed to generate answer.",
+                    }
+                )
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected.")
+    finally:
+        ws_manager.disconnect(websocket)
 
 
 @app.post("/slack/events")

@@ -138,5 +138,47 @@ class SlackEndpointChallengeTests(unittest.TestCase):
         self.assertEqual(response.json(), {"challenge": "abc123"})
 
 
+class WebSocketEndpointTests(unittest.TestCase):
+    def test_websocket_chat_returns_answer_for_question_payload(self) -> None:
+        client = TestClient(main.app)
+
+        with patch("main.query_graph_rag", return_value="socket answer") as query_graph_rag:
+            with client.websocket_connect("/ws/chat") as websocket:
+                connected_payload = websocket.receive_json()
+                self.assertEqual(connected_payload["type"], "connected")
+
+                websocket.send_json({"question": "What is in the graph?"})
+                response = websocket.receive_json()
+
+        self.assertEqual(response["type"], "answer")
+        self.assertEqual(response["status"], "ok")
+        self.assertEqual(response["answer"], "socket answer")
+        query_graph_rag.assert_called_once_with("What is in the graph?")
+
+    def test_websocket_chat_returns_error_for_empty_payload(self) -> None:
+        client = TestClient(main.app)
+
+        with client.websocket_connect("/ws/chat") as websocket:
+            websocket.receive_json()
+            websocket.send_json({"question": "   "})
+            response = websocket.receive_json()
+
+        self.assertEqual(response["type"], "error")
+        self.assertEqual(response["status"], "bad_request")
+
+    def test_websocket_chat_routes_help_requests_to_guidance(self) -> None:
+        client = TestClient(main.app)
+
+        with patch("main.generate_usage_guidance", return_value="usage guidance") as guidance:
+            with client.websocket_connect("/ws/chat") as websocket:
+                websocket.receive_json()
+                websocket.send_json({"question": "help"})
+                response = websocket.receive_json()
+
+        self.assertEqual(response["type"], "answer")
+        self.assertEqual(response["answer"], "usage guidance")
+        guidance.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

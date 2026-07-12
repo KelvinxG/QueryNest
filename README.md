@@ -216,7 +216,26 @@ OPENAI_LARGE_MODEL=openai/gpt-4o
 - `POST /ingest/google`: queues a Google Sheets, Slides, or Docs ingestion job. Requires `X-API-Key`.
 - `POST /ingest/text`: queues direct raw text ingestion. Requires `X-API-Key`.
 - `POST /query`: returns a synchronous GraphRAG answer text for an HTTP question.
+- `WS /ws/chat`: bidirectional real-time query channel. Send JSON messages with `question` and receive answer/error events.
 - `POST /slack/events`: handles Slack URL verification and `app_mention` events.
+
+Example WebSocket payloads:
+
+```json
+{
+    "question": "Summarize the main documents in the graph."
+}
+```
+
+Example response event:
+
+```json
+{
+    "type": "answer",
+    "status": "ok",
+    "answer": "..."
+}
+```
 
 ## Prompt Engineering
 
