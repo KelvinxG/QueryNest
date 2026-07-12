@@ -9,7 +9,7 @@ from googleapiclient.errors import HttpError
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from config import get_llm_kwargs, get_settings
+from config import get_llm_kwargs, get_settings, require_settings
 from graph_db import build_neo4j_manager
 
 logger = logging.getLogger(__name__)
@@ -39,11 +39,11 @@ class IngestedDocument(BaseModel):
 
 
 def _load_service_account_credentials() -> Credentials:
-    settings = get_settings()
+    settings = require_settings("GOOGLE_CREDENTIALS_FILE_PATH")
 
     try:
         credentials = Credentials.from_service_account_file(
-            settings.GOOGLE_CREDENTIALS_FILE_PATH,
+            settings["GOOGLE_CREDENTIALS_FILE_PATH"],
             scopes=list(GOOGLE_API_SCOPES),
         )
         return credentials

@@ -10,7 +10,7 @@ from typing import Any, Literal
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 
-from config import get_settings
+from config import get_settings, require_settings
 from engine import generate_usage_guidance, query_graph_rag
 from graph_db import build_neo4j_manager
 from ingestion import ingest_google_document, ingest_text_document
@@ -69,10 +69,10 @@ def health_check() -> dict[str, str]:
 
 
 def post_slack_message(channel: str, text: str) -> None:
-    settings = get_settings()
+    settings = require_settings("SLACK_BOT_TOKEN")
     try:
         send_slack_bot_message(
-            bot_token=settings.SLACK_BOT_TOKEN,
+            bot_token=settings["SLACK_BOT_TOKEN"],
             channel=channel,
             text=text,
         )
@@ -86,7 +86,7 @@ def _verify_slack_signature(
     timestamp: str | None,
     slack_signature: str | None,
 ) -> None:
-    settings = get_settings()
+    settings = require_settings("SLACK_SIGNING_SECRET")
 
     if not timestamp or not slack_signature:
         logger.warning("Slack request missing signature headers.")
@@ -104,7 +104,7 @@ def _verify_slack_signature(
 
     basestring = f"{SLACK_SIGNATURE_VERSION}:{timestamp}:{raw_body.decode('utf-8')}"
     digest = hmac.new(
-        settings.SLACK_SIGNING_SECRET.encode("utf-8"),
+        settings["SLACK_SIGNING_SECRET"].encode("utf-8"),
         basestring.encode("utf-8"),
         hashlib.sha256,
     ).hexdigest()
@@ -116,8 +116,8 @@ def _verify_slack_signature(
 
 
 def _verify_ingestion_api_key(api_key: str | None) -> None:
-    settings = get_settings()
-    if not api_key or not hmac.compare_digest(api_key, settings.INGESTION_API_TOKEN):
+    settings = require_settings("INGESTION_API_TOKEN")
+    if not api_key or not hmac.compare_digest(api_key, settings["INGESTION_API_TOKEN"]):
         logger.warning("Rejected ingestion request with an invalid API key.")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ingestion API key.")
 
@@ -222,11 +222,12 @@ async def slack_events(
         )
     except Exception as exc:
         try:
+            settings = require_settings("SLACK_SIGNING_SECRET")
             parsed = receive_slack_webhook(
                 raw_body=raw_body,
                 timestamp=x_slack_request_timestamp,
                 slack_signature=x_slack_signature,
-                signing_secret=get_settings().SLACK_SIGNING_SECRET,
+                signing_secret=settings["SLACK_SIGNING_SECRET"],
             )
         except Exception as inner_exc:
             logger.exception("Failed to parse or verify the Slack request.")

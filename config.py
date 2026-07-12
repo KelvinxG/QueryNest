@@ -12,18 +12,18 @@ DEFAULT_LARGE_MODEL = "gpt-4o"
 
 
 class Settings(BaseSettings):
-    OPENAI_API_KEY: str
+    OPENAI_API_KEY: str | None = None
     OPENROUTER_API_KEY: str | None = None
     OPENAI_BASE_URL: str | None = None
     OPENAI_SMALL_MODEL: str = DEFAULT_SMALL_MODEL
     OPENAI_LARGE_MODEL: str = DEFAULT_LARGE_MODEL
-    NEO4J_URI: str
-    NEO4J_USER: str
-    NEO4J_PASSWORD: str
-    SLACK_BOT_TOKEN: str
-    SLACK_SIGNING_SECRET: str
-    GOOGLE_CREDENTIALS_FILE_PATH: str
-    INGESTION_API_TOKEN: str
+    NEO4J_URI: str | None = None
+    NEO4J_USER: str | None = None
+    NEO4J_PASSWORD: str | None = None
+    SLACK_BOT_TOKEN: str | None = None
+    SLACK_SIGNING_SECRET: str | None = None
+    GOOGLE_CREDENTIALS_FILE_PATH: str | None = None
+    INGESTION_API_TOKEN: str | None = None
 
     model_config = SettingsConfigDict(
         env_file_encoding="utf-8",
@@ -59,6 +59,26 @@ def get_settings() -> Settings:
     return _load_settings_for_env(app_env)
 
 
+def require_settings(*names: str) -> dict[str, str]:
+    settings = get_settings()
+    values: dict[str, str] = {}
+    missing: list[str] = []
+
+    for name in names:
+        raw_value = getattr(settings, name, None)
+        value = raw_value.strip() if isinstance(raw_value, str) else raw_value
+        if not value:
+            missing.append(name)
+            continue
+        values[name] = str(value)
+
+    if missing:
+        missing_list = ", ".join(sorted(missing))
+        raise RuntimeError(f"Missing required settings: {missing_list}")
+
+    return values
+
+
 def _normalize_openai_api_key(raw_key: str | None, fallback_key: str | None = None) -> str:
     candidate_sources = [raw_key or "", fallback_key or ""]
 
@@ -80,9 +100,13 @@ def _normalize_openai_api_key(raw_key: str | None, fallback_key: str | None = No
 
 def get_llm_kwargs(*, model: str) -> dict[str, Any]:
     settings = get_settings()
+    api_key = _normalize_openai_api_key(settings.OPENAI_API_KEY, settings.OPENROUTER_API_KEY)
+    if not api_key:
+        raise RuntimeError("Missing required settings: OPENAI_API_KEY")
+
     kwargs: dict[str, Any] = {
         "model": model,
-        "api_key": _normalize_openai_api_key(settings.OPENAI_API_KEY, settings.OPENROUTER_API_KEY),
+        "api_key": api_key,
     }
 
     if settings.OPENAI_BASE_URL:

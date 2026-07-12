@@ -7,7 +7,7 @@ from typing import Any
 from neo4j import Driver, GraphDatabase
 from neo4j.exceptions import Neo4jError
 
-from config import get_settings
+from config import require_settings
 
 logger = logging.getLogger(__name__)
 
@@ -114,9 +114,9 @@ class Neo4jManager:
 
 
 def build_neo4j_manager() -> Neo4jManager:
-    settings = get_settings()
+    settings = require_settings("NEO4J_URI", "NEO4J_USER", "NEO4J_PASSWORD")
     return Neo4jManager(
-        uri=settings.NEO4J_URI,
-        user=settings.NEO4J_USER,
-        password=settings.NEO4J_PASSWORD,
+        uri=settings["NEO4J_URI"],
+        user=settings["NEO4J_USER"],
+        password=settings["NEO4J_PASSWORD"],
     )
