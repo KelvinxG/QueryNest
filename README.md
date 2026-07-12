@@ -333,17 +333,16 @@ python ingest_local_file.py \
 Optional arguments:
 
 - `--document-id`: set your own stable document id.
-- `--base-url`: target another API base URL (default `http://127.0.0.1:8001`).
+- `--base-url`: target another API base URL. Defaults to `PUBLIC_API_BASE_URL` when configured, otherwise `http://127.0.0.1:8001`.
 - `--api-key`: pass ingestion token directly instead of reading from `.env`.
 
-Remote forward smoke test (dev tunnel):
+Remote forward smoke test:
 
 ```bash
-python tests/ingestion_forward_check.py \
-    --base-url "https://3554qlgx-8001.asse.devtunnels.ms/"
+python tests/ingestion_forward_check.py
 ```
 
-This sends a `POST /ingest/text` request with your `INGESTION_API_TOKEN` and verifies whether the remote API accepts ingestion.
+This sends a `POST /ingest/text` request with your `INGESTION_API_TOKEN` and verifies whether the remote API accepts ingestion. It defaults to `PUBLIC_API_BASE_URL` from `.env.prod`, `.env`, or the process environment when available.
 
 ## Notes
 

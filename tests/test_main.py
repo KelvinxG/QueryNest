@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import HTTPException
+from fastapi.testclient import TestClient
 
 import main
 
@@ -111,6 +112,20 @@ class QueryEndpointTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.answer, "answer")
+
+
+class SlackEndpointChallengeTests(unittest.TestCase):
+    def test_slack_events_accepts_url_verification_without_loading_full_settings(self) -> None:
+        client = TestClient(main.app)
+
+        with patch("main.get_settings", side_effect=RuntimeError("settings should not load for challenge")):
+            response = client.post(
+                "/slack/events",
+                json={"type": "url_verification", "challenge": "abc123"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"challenge": "abc123"})
 
 
 if __name__ == "__main__":
