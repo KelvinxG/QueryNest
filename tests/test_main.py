@@ -13,6 +13,16 @@ from fastapi.testclient import TestClient
 import main
 
 
+def _required_settings(**values: str):
+    def _resolver(*names: str) -> dict[str, str]:
+        missing = [name for name in names if name not in values]
+        if missing:
+            raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
+        return {name: values[name] for name in names}
+
+    return _resolver
+
+
 class SlackVerificationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.body = b'{"type":"url_verification"}'
@@ -29,12 +39,12 @@ class SlackVerificationTests(unittest.TestCase):
         return f"v0={digest}"
 
     def test_verify_slack_signature_accepts_valid_signature(self) -> None:
-        with patch("main.get_settings", return_value=SimpleNamespace(SLACK_SIGNING_SECRET=self.secret)):
+        with patch("main.require_settings", side_effect=_required_settings(SLACK_SIGNING_SECRET=self.secret)):
             with patch("main.time.time", return_value=int(self.timestamp)):
                 main._verify_slack_signature(self.body, self.timestamp, self._signature())
 
     def test_verify_slack_signature_rejects_invalid_signature(self) -> None:
-        with patch("main.get_settings", return_value=SimpleNamespace(SLACK_SIGNING_SECRET=self.secret)):
+        with patch("main.require_settings", side_effect=_required_settings(SLACK_SIGNING_SECRET=self.secret)):
             with patch("main.time.time", return_value=int(self.timestamp)):
                 with self.assertRaises(HTTPException) as context:
                     main._verify_slack_signature(self.body, self.timestamp, "v0=invalid")
@@ -42,7 +52,7 @@ class SlackVerificationTests(unittest.TestCase):
         self.assertEqual(context.exception.status_code, 401)
 
     def test_verify_slack_signature_rejects_expired_timestamp(self) -> None:
-        with patch("main.get_settings", return_value=SimpleNamespace(SLACK_SIGNING_SECRET=self.secret)):
+        with patch("main.require_settings", side_effect=_required_settings(SLACK_SIGNING_SECRET=self.secret)):
             with patch(
                 "main.time.time",
                 return_value=int(self.timestamp) + main.SLACK_TIMESTAMP_TOLERANCE_SECONDS + 1,
@@ -55,11 +65,11 @@ class SlackVerificationTests(unittest.TestCase):
 
 class IngestionApiKeyTests(unittest.TestCase):
     def test_verify_ingestion_api_key_accepts_match(self) -> None:
-        with patch("main.get_settings", return_value=SimpleNamespace(INGESTION_API_TOKEN="abc123")):
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="abc123")):
             main._verify_ingestion_api_key("abc123")
 
     def test_verify_ingestion_api_key_rejects_mismatch(self) -> None:
-        with patch("main.get_settings", return_value=SimpleNamespace(INGESTION_API_TOKEN="abc123")):
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="abc123")):
             with self.assertRaises(HTTPException) as context:
                 main._verify_ingestion_api_key("wrong")
 

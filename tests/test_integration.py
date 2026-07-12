@@ -13,6 +13,16 @@ from fastapi.testclient import TestClient
 import main
 
 
+def _required_settings(**values: str):
+    def _resolver(*names: str) -> dict[str, str]:
+        missing = [name for name in names if name not in values]
+        if missing:
+            raise RuntimeError(f"Missing required settings: {', '.join(missing)}")
+        return {name: values[name] for name in names}
+
+    return _resolver
+
+
 class ApiIntegrationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.client = TestClient(main.app)
@@ -55,8 +65,8 @@ class ApiIntegrationTests(unittest.TestCase):
         signature = self._build_slack_signature(raw_body, timestamp, signing_secret)
 
         with patch(
-            "main.get_settings",
-            return_value=SimpleNamespace(
+            "main.require_settings",
+            side_effect=_required_settings(
                 SLACK_SIGNING_SECRET=signing_secret,
                 SLACK_BOT_TOKEN="xoxb-test-token",
                 INGESTION_API_TOKEN="ingest-token",
@@ -91,8 +101,8 @@ class ApiIntegrationTests(unittest.TestCase):
         payload = {"type": "url_verification", "challenge": "challenge-token"}
 
         with patch(
-            "main.get_settings",
-            return_value=SimpleNamespace(
+            "main.require_settings",
+            side_effect=_required_settings(
                 SLACK_SIGNING_SECRET="integration-secret",
                 SLACK_BOT_TOKEN="xoxb-test-token",
                 INGESTION_API_TOKEN="ingest-token",
@@ -114,8 +124,8 @@ class ApiIntegrationTests(unittest.TestCase):
         }
 
         with patch(
-            "main.get_settings",
-            return_value=SimpleNamespace(
+            "main.require_settings",
+            side_effect=_required_settings(
                 SLACK_SIGNING_SECRET="integration-secret",
                 SLACK_BOT_TOKEN="xoxb-test-token",
                 INGESTION_API_TOKEN="ingest-token",
