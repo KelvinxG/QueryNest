@@ -99,6 +99,9 @@ class ApiIntegrationTests(unittest.TestCase):
 
     def test_slack_url_verification_returns_challenge(self) -> None:
         payload = {"type": "url_verification", "challenge": "challenge-token"}
+        raw_body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        timestamp = str(int(time.time()))
+        signature = self._build_slack_signature(raw_body, timestamp, "integration-secret")
 
         with patch(
             "main.require_settings",
@@ -110,7 +113,12 @@ class ApiIntegrationTests(unittest.TestCase):
         ):
             response = self.client.post(
                 "/slack/events",
-                json=payload,
+                content=raw_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Slack-Request-Timestamp": timestamp,
+                    "X-Slack-Signature": signature,
+                },
             )
 
         self.assertEqual(response.status_code, 200)

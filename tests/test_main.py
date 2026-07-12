@@ -125,30 +125,66 @@ class QueryEndpointTests(unittest.TestCase):
 
 
 class SlackEndpointChallengeTests(unittest.TestCase):
-    def test_slack_events_accepts_url_verification_without_loading_full_settings(self) -> None:
+    def test_slack_events_accepts_signed_url_verification(self) -> None:
+        client = TestClient(main.app)
+        raw_body = b'{"type":"url_verification","challenge":"abc123"}'
+        timestamp = "1700000000"
+        signing_secret = "test-secret"
+        base_string = f"v0:{timestamp}:{raw_body.decode('utf-8')}"
+        digest = hmac.new(
+            signing_secret.encode("utf-8"),
+            base_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        signature = f"v0={digest}"
+
+        with patch("main.require_settings", side_effect=_required_settings(SLACK_SIGNING_SECRET=signing_secret)):
+            with patch("main.time.time", return_value=int(timestamp)):
+                response = client.post(
+                    "/slack/events",
+                    content=raw_body,
+                    headers={
+                        "Content-Type": "application/json",
+                        "X-Slack-Request-Timestamp": timestamp,
+                        "X-Slack-Signature": signature,
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"challenge": "abc123"})
+
+    def test_slack_events_rejects_unsigned_url_verification(self) -> None:
         client = TestClient(main.app)
 
-        with patch("main.get_settings", side_effect=RuntimeError("settings should not load for challenge")):
+        with patch("main.require_settings", side_effect=_required_settings(SLACK_SIGNING_SECRET="test-secret")):
             response = client.post(
                 "/slack/events",
                 json={"type": "url_verification", "challenge": "abc123"},
             )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"challenge": "abc123"})
+        self.assertEqual(response.status_code, 400)
 
 
 class WebSocketEndpointTests(unittest.TestCase):
+    def test_websocket_chat_rejects_invalid_token(self) -> None:
+        client = TestClient(main.app)
+
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="ws-token")):
+            with self.assertRaises(Exception):
+                with client.websocket_connect("/ws/chat?token=invalid"):
+                    pass
+
     def test_websocket_chat_returns_answer_for_question_payload(self) -> None:
         client = TestClient(main.app)
 
-        with patch("main.query_graph_rag", return_value="socket answer") as query_graph_rag:
-            with client.websocket_connect("/ws/chat") as websocket:
-                connected_payload = websocket.receive_json()
-                self.assertEqual(connected_payload["type"], "connected")
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="ws-token")):
+            with patch("main.query_graph_rag", return_value="socket answer") as query_graph_rag:
+                with client.websocket_connect("/ws/chat?token=ws-token") as websocket:
+                    connected_payload = websocket.receive_json()
+                    self.assertEqual(connected_payload["type"], "connected")
 
-                websocket.send_json({"question": "What is in the graph?"})
-                response = websocket.receive_json()
+                    websocket.send_json({"question": "What is in the graph?"})
+                    response = websocket.receive_json()
 
         self.assertEqual(response["type"], "answer")
         self.assertEqual(response["status"], "ok")
@@ -158,10 +194,11 @@ class WebSocketEndpointTests(unittest.TestCase):
     def test_websocket_chat_returns_error_for_empty_payload(self) -> None:
         client = TestClient(main.app)
 
-        with client.websocket_connect("/ws/chat") as websocket:
-            websocket.receive_json()
-            websocket.send_json({"question": "   "})
-            response = websocket.receive_json()
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="ws-token")):
+            with client.websocket_connect("/ws/chat?token=ws-token") as websocket:
+                websocket.receive_json()
+                websocket.send_json({"question": "   "})
+                response = websocket.receive_json()
 
         self.assertEqual(response["type"], "error")
         self.assertEqual(response["status"], "bad_request")
@@ -169,11 +206,12 @@ class WebSocketEndpointTests(unittest.TestCase):
     def test_websocket_chat_routes_help_requests_to_guidance(self) -> None:
         client = TestClient(main.app)
 
-        with patch("main.generate_usage_guidance", return_value="usage guidance") as guidance:
-            with client.websocket_connect("/ws/chat") as websocket:
-                websocket.receive_json()
-                websocket.send_json({"question": "help"})
-                response = websocket.receive_json()
+        with patch("main.require_settings", side_effect=_required_settings(INGESTION_API_TOKEN="ws-token")):
+            with patch("main.generate_usage_guidance", return_value="usage guidance") as guidance:
+                with client.websocket_connect("/ws/chat?token=ws-token") as websocket:
+                    websocket.receive_json()
+                    websocket.send_json({"question": "help"})
+                    response = websocket.receive_json()
 
         self.assertEqual(response["type"], "answer")
         self.assertEqual(response["answer"], "usage guidance")

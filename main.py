@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import logging
 import re
 import time
@@ -28,6 +29,8 @@ app = FastAPI(title="GraphRAG Slack Backend")
 SLACK_SIGNATURE_VERSION = "v0"
 SLACK_TIMESTAMP_TOLERANCE_SECONDS = 300
 HELP_KEYWORDS = {"help", "usage", "how to use", "example", "examples", "suggest", "suggestions"}
+MAX_WEBSOCKET_QUESTION_LENGTH = 2_000
+WEBSOCKET_MIN_REQUEST_INTERVAL_SECONDS = 0.2
 
 
 class GoogleIngestionRequest(BaseModel):
@@ -138,6 +141,12 @@ def _verify_ingestion_api_key(api_key: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid ingestion API key.")
 
 
+def _verify_websocket_api_key(api_key: str | None) -> None:
+    settings = require_settings("INGESTION_API_TOKEN")
+    if not api_key or not hmac.compare_digest(api_key, settings["INGESTION_API_TOKEN"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid websocket API key.")
+
+
 def _normalize_slack_text(text: str) -> str:
     return re.sub(r"<@[^>]+>", "", text).strip()
 
@@ -233,6 +242,13 @@ def _extract_ws_question(payload: Any) -> str:
 
 @app.websocket("/ws/chat")
 async def websocket_chat(websocket: WebSocket) -> None:
+    auth_token = websocket.headers.get("x-api-key") or websocket.query_params.get("token")
+    try:
+        _verify_websocket_api_key(auth_token)
+    except HTTPException:
+        await websocket.close(code=1008, reason="Invalid websocket API key.")
+        return
+
     await ws_manager.connect(websocket)
     await websocket.send_json(
         {
@@ -241,9 +257,37 @@ async def websocket_chat(websocket: WebSocket) -> None:
         }
     )
 
+    last_request_time = 0.0
     try:
         while True:
-            payload = await websocket.receive_json()
+            raw_message = await websocket.receive_text()
+            if len(raw_message) > MAX_WEBSOCKET_QUESTION_LENGTH * 2:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "bad_request",
+                        "detail": "Payload is too large.",
+                    }
+                )
+                continue
+
+            now = time.monotonic()
+            if now - last_request_time < WEBSOCKET_MIN_REQUEST_INTERVAL_SECONDS:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "too_many_requests",
+                        "detail": "Too many requests. Slow down and try again.",
+                    }
+                )
+                continue
+            last_request_time = now
+
+            try:
+                payload = json.loads(raw_message)
+            except json.JSONDecodeError:
+                payload = raw_message
+
             question = _extract_ws_question(payload)
 
             if not question:
@@ -252,6 +296,16 @@ async def websocket_chat(websocket: WebSocket) -> None:
                         "type": "error",
                         "status": "bad_request",
                         "detail": "Question is required. Send {'question': '...'}.",
+                    }
+                )
+                continue
+
+            if len(question) > MAX_WEBSOCKET_QUESTION_LENGTH:
+                await websocket.send_json(
+                    {
+                        "type": "error",
+                        "status": "bad_request",
+                        "detail": f"Question is too long. Max length is {MAX_WEBSOCKET_QUESTION_LENGTH} characters.",
                     }
                 )
                 continue
@@ -302,24 +356,16 @@ async def slack_events(
 ) -> dict[str, Any]:
     try:
         raw_body = await request.body()
+        settings = require_settings("SLACK_SIGNING_SECRET")
         parsed = receive_slack_webhook(
             raw_body=raw_body,
-            timestamp=None,
-            slack_signature=None,
-            signing_secret="",
+            timestamp=x_slack_request_timestamp,
+            slack_signature=x_slack_signature,
+            signing_secret=settings["SLACK_SIGNING_SECRET"],
         )
     except Exception as exc:
-        try:
-            settings = require_settings("SLACK_SIGNING_SECRET")
-            parsed = receive_slack_webhook(
-                raw_body=raw_body,
-                timestamp=x_slack_request_timestamp,
-                slack_signature=x_slack_signature,
-                signing_secret=settings["SLACK_SIGNING_SECRET"],
-            )
-        except Exception as inner_exc:
-            logger.exception("Failed to parse or verify the Slack request.")
-            raise HTTPException(status_code=400, detail="Invalid Slack request.") from inner_exc
+        logger.exception("Failed to parse or verify the Slack request.")
+        raise HTTPException(status_code=400, detail="Invalid Slack request.") from exc
 
     if parsed.get("kind") == "challenge":
         return {"challenge": parsed.get("challenge")}

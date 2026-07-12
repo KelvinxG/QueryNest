@@ -55,14 +55,6 @@ def receive_slack_webhook(
     - URL verification: {"kind": "challenge", "challenge": "..."}
     - Event callback: {"kind": "event", "event": {...}, "payload": {...}}
     """
-    try:
-        payload = json.loads(raw_body.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError("Invalid JSON payload.") from exc
-
-    if "challenge" in payload:
-        return {"kind": "challenge", "challenge": payload["challenge"], "payload": payload}
-
     if not timestamp or not slack_signature:
         raise ValueError("Missing Slack signature headers.")
 
@@ -74,6 +66,14 @@ def receive_slack_webhook(
     )
     if not is_valid:
         raise ValueError("Invalid Slack signature.")
+
+    try:
+        payload = json.loads(raw_body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError("Invalid JSON payload.") from exc
+
+    if "challenge" in payload:
+        return {"kind": "challenge", "challenge": payload["challenge"], "payload": payload}
 
     return {"kind": "event", "event": payload.get("event", {}), "payload": payload}
 
